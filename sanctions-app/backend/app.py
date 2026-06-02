@@ -19,7 +19,7 @@ FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
 app = Flask(__name__)
 
-# Native CORS configuration (No external package required!)
+# Native CORS configuration (Tells browsers it is safe to connect)
 @app.after_request
 def add_cors_headers(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
