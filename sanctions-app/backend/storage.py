@@ -36,9 +36,9 @@ def init_db():
     db.entries.create_index([("uid", DESCENDING)])
     db.entries.create_index([("source", DESCENDING)])
     
-    # Optimize indexes for snapshots metadata and system change logs
-    db.snapshots.create_index([("source", DESCENDING), ("_id", DESCENDING)])
-    db.changes.create_index([("_id", DESCENDING)])
+    # Optimize indexes for snapshots metadata
+    # (Removed custom _id index definitions because MongoDB handles _id sorting natively)
+    db.snapshots.create_index([("source", DESCENDING)])
 
 
 def latest_snapshot(db, source):
