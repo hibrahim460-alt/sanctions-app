@@ -11,6 +11,7 @@ Endpoints:
 
 import os
 from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
 
 import ingest
 import storage
@@ -18,6 +19,11 @@ import storage
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
 app = Flask(__name__)
+
+# Enable Cross-Origin Resource Sharing (CORS) for all /api/ endpoints to prevent browser cross-domain blockages
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Initialize database collections and native search indexes
 storage.init_db()
 
 
