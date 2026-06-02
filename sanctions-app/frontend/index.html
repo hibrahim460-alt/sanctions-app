@@ -135,7 +135,14 @@
   </div>
 
 <script>
-const api = p => fetch(p).then(r=>r.json());
+const BACKEND_URL = "https://sanctions-backend-5sws.onrender.com";
+
+// Generalized API execution function handling live layout mappings
+async function api(endpoint, options = {}) {
+  const response = await fetch(`${BACKEND_URL}${endpoint}`, options);
+  return response.json();
+}
+
 let allChanges = [], filter = "all";
 
 async function loadStats(){
@@ -143,20 +150,24 @@ async function loadStats(){
     OFAC:{label:"OFAC", live:true}, UN:{label:"UN", live:true},
     EU:{label:"EU", live:false}, INTERPOL:{label:"INTERPOL", live:false}
   };
-  const data = await api("/api/stats");
-  const byCount = {}; (data.sources||[]).forEach(s=>byCount[s.source]=s);
-  const el = document.getElementById("sourceCards"); el.innerHTML="";
-  Object.entries(meta).forEach(([k,m])=>{
-    const s = byCount[k];
-    const card = document.createElement("div");
-    card.className = "card" + (m.live?"":" disabled");
-    card.innerHTML = `
-      <h3>${m.label}</h3>
-      <div class="count">${s? (s.count??0).toLocaleString() : "—"}</div>
-      <div class="meta">${s&&s.last? "updated "+new Date(s.last).toLocaleString() : (m.live?"not yet ingested":"manual / no feed")}</div>
-      <span class="tag ${m.live?'live':''}">${m.live?'LIVE FEED':'MANUAL'}</span>`;
-    el.appendChild(card);
-  });
+  try {
+    const data = await api("/api/stats");
+    const byCount = {}; (data.sources||[]).forEach(s=>byCount[s.source]=s);
+    const el = document.getElementById("sourceCards"); el.innerHTML="";
+    Object.entries(meta).forEach(([k,m])=>{
+      const s = byCount[k];
+      const card = document.createElement("div");
+      card.className = "card" + (m.live?"":" disabled");
+      card.innerHTML = `
+        <h3>${m.label}</h3>
+        <div class="count">${s? (s.count??0).toLocaleString() : "—"}</div>
+        <div class="meta">${s&&s.last? "updated "+new Date(s.last).toLocaleString() : (m.live?"not yet ingested":"manual / no feed")}</div>
+        <span class="tag ${m.live?'live':''}">${m.live?'LIVE FEED':'MANUAL'}</span>`;
+      el.appendChild(card);
+    });
+  } catch (err) {
+    console.error("Failed to load dashboard metrics stats:", err);
+  }
 }
 
 function renderChanges(){
@@ -172,8 +183,12 @@ function renderChanges(){
 }
 
 async function loadChanges(){
-  const d = await api("/api/changes?limit=400");
-  allChanges = d.changes||[]; renderChanges();
+  try {
+    const d = await api("/api/changes?limit=400");
+    allChanges = d.changes||[]; renderChanges();
+  } catch (err) {
+    console.error("Failed to fetch feed updates items:", err);
+  }
 }
 
 document.getElementById("filters").addEventListener("click",e=>{
@@ -185,11 +200,13 @@ document.getElementById("filters").addEventListener("click",e=>{
 document.getElementById("run").addEventListener("click", async e=>{
   const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> Ingesting…';
   try{
-    const rep = await fetch("/api/ingest",{method:"POST"}).then(r=>r.json());
+    const rep = await api("/api/ingest", { method: "POST" });
     renderBanner(rep);
     await loadStats(); await loadChanges();
   }
-  catch(err){ alert("Ingest failed: "+err); }
+  catch(err){ 
+    alert("Ingest session processing failed: " + err); 
+  }
   b.disabled=false; b.textContent="Run ingest now";
 });
 
@@ -217,20 +234,26 @@ async function doScreen(){
   const box=document.getElementById("hits");
   if(!q){box.innerHTML='<div class="empty">Enter a name.</div>';return;}
   box.innerHTML='<div class="empty">Screening…</div>';
-  const d=await api("/api/screen?q="+encodeURIComponent(q));
-  const hits=d.hits||[];
-  if(!hits.length){box.innerHTML='<div class="empty">No matches above threshold.</div>';return;}
-  box.innerHTML=hits.map(h=>{
-    const cls=h.score>=0.8?"hi":h.score>=0.6?"md":"lo";
-    return `<div class="hit"><div class="top">
-      <span class="nm">${h.name}</span>
-      <span class="score ${cls}">${(h.score*100).toFixed(0)}%</span></div>
-      <div class="det">${h.source} · ${h.type} · ${(h.programs||[]).join(", ")||"—"}</div></div>`;
-  }).join("");
+  try {
+    const d=await api("/api/screen?q="+encodeURIComponent(q));
+    const hits=d.hits||[];
+    if(!hits.length){box.innerHTML='<div class="empty">No matches above threshold.</div>';return;}
+    box.innerHTML=hits.map(h=>{
+      const cls=h.score>=0.8?"hi":h.score>=0.6?"md":"lo";
+      return `<div class="hit"><div class="top">
+        <span class="nm">${h.name}</span>
+        <span class="score ${cls}">${(h.score*100).toFixed(0)}%</span></div>
+        <div class="det">${h.source} · ${h.type} · ${(h.programs||[]).join(", ")||"—"}</div></div>`;
+    }).join("");
+  } catch (err) {
+    box.innerHTML='<div class="empty">Screening execution error occurred.</div>';
+    console.error(err);
+  }
 }
 document.getElementById("screen").addEventListener("click",doScreen);
 document.getElementById("q").addEventListener("keydown",e=>{if(e.key==="Enter")doScreen();});
 
+// Run initial loading calls upon mounting dashboard view
 loadStats(); loadChanges();
 </script>
 </body>
