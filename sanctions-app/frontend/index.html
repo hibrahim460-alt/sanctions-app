@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watchlist Monitor — Compliance Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0c0f12; --panel:#13181d; --panel-2:#171d24; --line:#222a32;
+    --ink:#e6edf3; --dim:#7d8a97; --accent:#5ee6a8; --warn:#ffb84d;
+    --danger:#ff6b6b; --add:#5ee6a8; --rem:#ff6b6b; --mod:#ffb84d;
+    --mono:'JetBrains Mono',monospace; --display:'Archivo',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(900px 500px at 85% -10%, rgba(94,230,168,.06), transparent 60%),
+      var(--bg);
+    color:var(--ink); font-family:var(--mono); line-height:1.5;
+    min-height:100vh; padding:32px clamp(16px,4vw,56px);
+  }
+  header{display:flex;align-items:flex-end;justify-content:space-between;
+    border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:28px;
+    flex-wrap:wrap;gap:16px}
+  .brand h1{font-family:var(--display);font-weight:800;font-size:clamp(22px,3vw,32px);
+    letter-spacing:-.02em}
+  .brand .sub{color:var(--dim);font-size:12px;margin-top:4px;letter-spacing:.04em}
+  .pulse{display:inline-block;width:8px;height:8px;border-radius:50%;
+    background:var(--accent);margin-right:7px;box-shadow:0 0 0 0 rgba(94,230,168,.6);
+    animation:p 2.2s infinite}
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(94,230,168,.5)}70%{box-shadow:0 0 0 9px rgba(94,230,168,0)}100%{box-shadow:0 0 0 0 rgba(94,230,168,0)}}
+  .btn{font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:.03em;
+    background:var(--accent);color:#062318;border:none;padding:11px 18px;border-radius:7px;
+    cursor:pointer;transition:transform .12s,filter .12s}
+  .btn:hover{filter:brightness(1.08);transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn[disabled]{opacity:.5;cursor:wait}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:30px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel-2));
+    border:1px solid var(--line);border-radius:12px;padding:18px 20px;position:relative;overflow:hidden}
+  .card::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent);opacity:.7}
+  .card.disabled::before{background:var(--dim)}
+  .card h3{font-family:var(--display);font-size:14px;font-weight:600;letter-spacing:.02em}
+  .card .count{font-family:var(--display);font-weight:800;font-size:30px;margin-top:6px}
+  .card .meta{color:var(--dim);font-size:11px;margin-top:6px;min-height:14px}
+  .tag{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;
+    border:1px solid var(--line);color:var(--dim);margin-top:10px}
+  .tag.live{color:var(--accent);border-color:rgba(94,230,168,.4)}
+  .panels{display:grid;grid-template-columns:1.3fr 1fr;gap:22px}
+  @media(max-width:880px){.panels{grid-template-columns:1fr}}
+  section.block{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+  .block h2{font-family:var(--display);font-weight:800;font-size:16px;letter-spacing:-.01em;
+    margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .filters{display:flex;gap:7px;margin-bottom:14px;flex-wrap:wrap}
+  .chip{font-size:11px;padding:5px 11px;border-radius:20px;border:1px solid var(--line);
+    background:transparent;color:var(--dim);cursor:pointer;font-family:var(--mono)}
+  .chip.active{color:var(--ink);border-color:var(--accent)}
+  .changes{max-height:430px;overflow:auto}
+  .row{display:flex;align-items:center;gap:12px;padding:10px 6px;border-bottom:1px dashed var(--line);font-size:13px}
+  .row:last-child{border-bottom:none}
+  .badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0;width:74px;text-align:center}
+  .added{background:rgba(94,230,168,.14);color:var(--add)}
+  .removed{background:rgba(255,107,107,.14);color:var(--rem)}
+  .modified{background:rgba(255,184,77,.14);color:var(--mod)}
+  .row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .src{color:var(--dim);font-size:11px;flex-shrink:0}
+  .search-box{display:flex;gap:8px;margin-bottom:14px}
+  .search-box input{flex:1;background:#0a0d10;border:1px solid var(--line);border-radius:7px;
+    color:var(--ink);padding:11px 13px;font-family:var(--mono);font-size:13px}
+  .search-box input:focus{outline:none;border-color:var(--accent)}
+  .hit{padding:11px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;background:var(--panel-2)}
+  .hit .top{display:flex;justify-content:space-between;align-items:center}
+  .hit .nm{font-weight:600;font-size:13px}
+  .score{font-family:var(--display);font-weight:800;font-size:13px}
+  .score.hi{color:var(--danger)}.score.md{color:var(--warn)}.score.lo{color:var(--dim)}
+  .hit .det{color:var(--dim);font-size:11px;margin-top:4px}
+  .empty{color:var(--dim);font-size:12px;text-align:center;padding:28px 0}
+  .note{background:rgba(255,184,77,.07);border:1px solid rgba(255,184,77,.25);
+    border-radius:9px;padding:12px 14px;font-size:11px;color:var(--warn);margin-top:18px;line-height:1.6}
+  #banner{margin-bottom:22px;display:none;flex-direction:column;gap:8px}
+  .alert{border-radius:9px;padding:11px 14px;font-size:12px;line-height:1.5;border:1px solid}
+  .alert.fail{background:rgba(255,107,107,.08);border-color:rgba(255,107,107,.4);color:var(--danger)}
+  .alert.warn{background:rgba(255,184,77,.08);border-color:rgba(255,184,77,.35);color:var(--warn)}
+  .alert.ok{background:rgba(94,230,168,.07);border-color:rgba(94,230,168,.35);color:var(--accent)}
+  .alert b{font-family:var(--display);font-weight:800}
+  .alert ul{margin:6px 0 0 18px;padding:0}
+  .alert li{margin:2px 0}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.25);
+    border-top-color:#062318;border-radius:50%;animation:s .7s linear infinite;vertical-align:-1px}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1><span class="pulse"></span>Watchlist Monitor</h1>
+      <div class="sub">OFAC · UN · EU · INTERPOL — consolidated sanctions & watchlist surveillance</div>
+    </div>
+    <button class="btn" id="run">Run ingest now</button>
+  </header>
+
+  <div class="grid" id="sourceCards"></div>
+
+  <div id="banner"></div>
+
+  <div class="panels">
+    <section class="block">
+      <h2>Change feed</h2>
+      <div class="filters" id="filters">
+        <button class="chip active" data-f="all">All</button>
+        <button class="chip" data-f="added">Added</button>
+        <button class="chip" data-f="removed">Removed</button>
+        <button class="chip" data-f="modified">Modified</button>
+      </div>
+      <div class="changes" id="changes"><div class="empty">No changes yet — run an ingest.</div></div>
+    </section>
+
+    <section class="block">
+      <h2>Name screening</h2>
+      <div class="search-box">
+        <input id="q" placeholder="Enter a name to screen…" />
+        <button class="btn" id="screen">Screen</button>
+      </div>
+      <div id="hits"><div class="empty">Results appear here.</div></div>
+      <div class="note">
+        Token-overlap matching is a starting point only. For production, swap in
+        rapidfuzz/phonetic matching and keep an immutable audit log of every
+        screen. INTERPOL has no official feed — enter those manually or via a
+        licensed provider; do not scrape.
+      </div>
+    </section>
+  </div>
+
+<script>
+const api = p => fetch(p).then(r=>r.json());
+let allChanges = [], filter = "all";
+
+async function loadStats(){
+  const meta = {
+    OFAC:{label:"OFAC", live:true}, UN:{label:"UN", live:true},
+    EU:{label:"EU", live:false}, INTERPOL:{label:"INTERPOL", live:false}
+  };
+  const data = await api("/api/stats");
+  const byCount = {}; (data.sources||[]).forEach(s=>byCount[s.source]=s);
+  const el = document.getElementById("sourceCards"); el.innerHTML="";
+  Object.entries(meta).forEach(([k,m])=>{
+    const s = byCount[k];
+    const card = document.createElement("div");
+    card.className = "card" + (m.live?"":" disabled");
+    card.innerHTML = `
+      <h3>${m.label}</h3>
+      <div class="count">${s? (s.count??0).toLocaleString() : "—"}</div>
+      <div class="meta">${s&&s.last? "updated "+new Date(s.last).toLocaleString() : (m.live?"not yet ingested":"manual / no feed")}</div>
+      <span class="tag ${m.live?'live':''}">${m.live?'LIVE FEED':'MANUAL'}</span>`;
+    el.appendChild(card);
+  });
+}
+
+function renderChanges(){
+  const box = document.getElementById("changes");
+  const rows = allChanges.filter(c=>filter==="all"||c.change_type===filter);
+  if(!rows.length){box.innerHTML='<div class="empty">No changes match this filter.</div>';return;}
+  box.innerHTML = rows.slice(0,300).map(c=>`
+    <div class="row">
+      <span class="badge ${c.change_type}">${c.change_type}</span>
+      <span class="nm">${c.primary_name||"(unnamed)"}</span>
+      <span class="src">${c.source}</span>
+    </div>`).join("");
+}
+
+async function loadChanges(){
+  const d = await api("/api/changes?limit=400");
+  allChanges = d.changes||[]; renderChanges();
+}
+
+document.getElementById("filters").addEventListener("click",e=>{
+  if(!e.target.dataset.f)return;
+  document.querySelectorAll(".chip").forEach(c=>c.classList.remove("active"));
+  e.target.classList.add("active"); filter=e.target.dataset.f; renderChanges();
+});
+
+document.getElementById("run").addEventListener("click", async e=>{
+  const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> Ingesting…';
+  try{
+    const rep = await fetch("/api/ingest",{method:"POST"}).then(r=>r.json());
+    renderBanner(rep);
+    await loadStats(); await loadChanges();
+  }
+  catch(err){ alert("Ingest failed: "+err); }
+  b.disabled=false; b.textContent="Run ingest now";
+});
+
+function renderBanner(report){
+  const banner=document.getElementById("banner");
+  const items=(report||[]).filter(r=>r.status!=="disabled");
+  if(!items.length){banner.style.display="none";return;}
+  banner.style.display="flex";
+  banner.innerHTML=items.map(r=>{
+    let cls="ok", head;
+    if(r.status==="validation_failed"){cls="fail";head=`${r.source}: feed rejected — snapshot NOT stored`;}
+    else if(r.status==="error"){cls="fail";head=`${r.source}: fetch error`;}
+    else if(r.status==="updated_with_warnings"||(r.issues&&r.issues.length)){cls="warn";head=`${r.source}: updated with warnings`;}
+    else if(r.status==="unchanged"){cls="ok";head=`${r.source}: no change since last fetch`;}
+    else{cls="ok";head=`${r.source}: updated cleanly (+${r.added||0} / −${r.removed||0} / ~${r.modified||0})`;}
+    const detail=r.error?`<ul><li>${r.error}</li></ul>`
+      : (r.issues&&r.issues.length)?`<ul>${r.issues.map(i=>`<li>${i}</li>`).join("")}</ul>`:"";
+    const noteLine=r.note?`<div style="margin-top:5px;opacity:.85">${r.note}</div>`:"";
+    return `<div class="alert ${cls}"><b>${head}</b>${detail}${noteLine}</div>`;
+  }).join("");
+}
+
+async function doScreen(){
+  const q=document.getElementById("q").value.trim();
+  const box=document.getElementById("hits");
+  if(!q){box.innerHTML='<div class="empty">Enter a name.</div>';return;}
+  box.innerHTML='<div class="empty">Screening…</div>';
+  const d=await api("/api/screen?q="+encodeURIComponent(q));
+  const hits=d.hits||[];
+  if(!hits.length){box.innerHTML='<div class="empty">No matches above threshold.</div>';return;}
+  box.innerHTML=hits.map(h=>{
+    const cls=h.score>=0.8?"hi":h.score>=0.6?"md":"lo";
+    return `<div class="hit"><div class="top">
+      <span class="nm">${h.name}</span>
+      <span class="score ${cls}">${(h.score*100).toFixed(0)}%</span></div>
+      <div class="det">${h.source} · ${h.type} · ${(h.programs||[]).join(", ")||"—"}</div></div>`;
+  }).join("");
+}
+document.getElementById("screen").addEventListener("click",doScreen);
+document.getElementById("q").addEventListener("keydown",e=>{if(e.key==="Enter")doScreen();});
+
+loadStats(); loadChanges();
+</script>
+</body>
+</html>
