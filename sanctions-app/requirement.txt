@@ -1,0 +1,4 @@
+Flask>=3.0
+lxml>=5.0
+# Optional but recommended for production-grade name matching:
+# rapidfuzz>=3.0
