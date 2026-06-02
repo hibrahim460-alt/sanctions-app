@@ -1,166 +1,204 @@
 """
-SQLite storage with full snapshot history + a diff engine.
+MongoDB storage layer with full snapshot history + a diff engine.
 
-Tables:
-  snapshots(id, source, fetched_at, entry_count, file_hash)
-  entries(snapshot_id, uid, source, source_id, type, primary_name,
-          aliases_json, programs_json, listed_on, raw_fingerprint)
-  changes(id, run_at, source, change_type, uid, primary_name, detail_json)
-
-This gives you the audit trail regulators typically ask for: what the list
-looked like at each fetch, and exactly what changed between fetches.
+Collections:
+  snapshots -> metadata for each fetch session
+  entries   -> normalized entries tied to a snapshot_id
+  changes   -> historical log of additions, deletions, and modifications
 """
 
-import json
 import os
-import sqlite3
+import json
 from datetime import datetime, timezone
+from bson.objectid import ObjectId
+from pymongo import MongoClient, DESCENDING
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "sanctions.db")
+# Pull the MongoDB connection URI from environment variables (configured later on Render)
+# Fallback to local MongoDB if environment variable isn't present during local testing
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
+DB_NAME = os.environ.get("MONGO_DB_NAME", "sanctions_compliance")
 
+_db_client = None
 
-def _conn():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+def _get_db():
+    global _db_client
+    if _db_client is None:
+        _db_client = MongoClient(MONGO_URI)
+    return _db_client[DB_NAME]
 
 
 def init_db():
-    with _conn() as c:
-        c.executescript("""
-        CREATE TABLE IF NOT EXISTS snapshots(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source TEXT, fetched_at TEXT, entry_count INTEGER, file_hash TEXT
-        );
-        CREATE TABLE IF NOT EXISTS entries(
-            snapshot_id INTEGER, uid TEXT, source TEXT, source_id TEXT,
-            type TEXT, primary_name TEXT, aliases_json TEXT,
-            programs_json TEXT, listed_on TEXT, raw_fingerprint TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_entries_snap ON entries(snapshot_id);
-        CREATE INDEX IF NOT EXISTS idx_entries_uid ON entries(uid);
-        CREATE TABLE IF NOT EXISTS changes(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_at TEXT, source TEXT, change_type TEXT,
-            uid TEXT, primary_name TEXT, detail_json TEXT
-        );
-        """)
+    """Initializes indexes to ensure blazing fast screenings and database lookups."""
+    db = _get_db()
+    
+    # Optimize indexes for entries collection search queries
+    db.entries.create_index([("snapshot_id", DESCENDING)])
+    db.entries.create_index([("uid", DESCENDING)])
+    db.entries.create_index([("source", DESCENDING)])
+    
+    # Optimize indexes for snapshots metadata and system change logs
+    db.snapshots.create_index([("source", DESCENDING), ("_id", DESCENDING)])
+    db.changes.create_index([("_id", DESCENDING)])
 
 
-def latest_snapshot(c, source):
-    return c.execute(
-        "SELECT * FROM snapshots WHERE source=? ORDER BY id DESC LIMIT 1",
-        (source,)).fetchone()
+def latest_snapshot(db, source):
+    """Returns the most recent snapshot document for a specific source feed."""
+    return db.snapshots.find_one({"source": source}, sort=[("_id", DESCENDING)])
 
 
-def _entries_map(c, snapshot_id):
-    rows = c.execute("SELECT * FROM entries WHERE snapshot_id=?",
-                     (snapshot_id,)).fetchall()
-    return {r["uid"]: r for r in rows}
+def _entries_map(db, snapshot_id):
+    """Retrieves all entries for a snapshot and maps them by UID into memory for diffing."""
+    cursor = db.entries.find({"snapshot_id": snapshot_id})
+    return {doc["uid"]: doc for doc in cursor}
 
 
 def save_snapshot_and_diff(source, records, file_hash):
-    """Persist a new snapshot and compute the diff against the previous one.
-    Returns the list of change dicts."""
+    """Persists a new snapshot and computes document diffs natively against the previous one."""
+    db = _get_db()
     now = datetime.now(timezone.utc).isoformat()
-    with _conn() as c:
-        prev = latest_snapshot(c, source)
+    
+    prev = latest_snapshot(db, source)
 
-        # skip if identical file we've already ingested
-        if prev and prev["file_hash"] == file_hash:
-            return {"skipped": True, "reason": "unchanged file", "changes": []}
+    # Skip if an identical file hash has already been successfully processed
+    if prev and prev.get("file_hash") == file_hash:
+        return {"skipped": True, "reason": "unchanged file", "changes": []}
 
-        cur = c.execute(
-            "INSERT INTO snapshots(source,fetched_at,entry_count,file_hash) "
-            "VALUES(?,?,?,?)", (source, now, len(records), file_hash))
-        snap_id = cur.lastrowid
+    # 1. Insert snapshot metadata
+    snap_doc = {
+        "source": source,
+        "fetched_at": now,
+        "entry_count": len(records),
+        "file_hash": file_hash
+    }
+    snap_id = db.snapshots.insert_one(snap_doc).inserted_id
 
-        c.executemany(
-            "INSERT INTO entries(snapshot_id,uid,source,source_id,type,"
-            "primary_name,aliases_json,programs_json,listed_on,raw_fingerprint)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
-            [(snap_id, r["uid"], r["source"], r["source_id"], r["type"],
-              r["primary_name"], json.dumps(r["aliases"]),
-              json.dumps(r["programs"]), r["listed_on"], r["raw_fingerprint"])
-             for r in records])
+    # 2. Bulk insert normalized records natively
+    if records:
+        mongo_records = []
+        for r in records:
+            mongo_records.append({
+                "snapshot_id": snap_id,
+                "uid": r["uid"],
+                "source": r["source"],
+                "source_id": r["source_id"],
+                "type": r["type"],
+                "primary_name": r["primary_name"],
+                "aliases": r["aliases"],        # Saved natively as a flexible BSON array list
+                "programs": r["programs"],      # Saved natively as a flexible BSON array list
+                "listed_on": r["listed_on"],
+                "raw_fingerprint": r["raw_fingerprint"]
+            })
+        db.entries.insert_many(mongo_records)
 
-        changes = []
-        new_map = {r["uid"]: r for r in records}
+    # 3. Compute Delta Changes (The Diff Engine)
+    changes = []
+    new_map = {r["uid"]: r for r in records}
 
-        if prev is None:
-            # first ingest: everything is an addition (recorded compactly)
-            for r in records:
-                changes.append({"change_type": "added", "uid": r["uid"],
-                                "primary_name": r["primary_name"],
-                                "detail": {"initial_load": True}})
-        else:
-            old_map = _entries_map(c, prev["id"])
-            old_keys, new_keys = set(old_map), set(new_map)
+    if prev is None:
+        # First-time load configuration tracking
+        for r in records:
+            changes.append({
+                "change_type": "added", "uid": r["uid"],
+                "primary_name": r["primary_name"],
+                "detail": {"initial_load": True}
+            })
+    else:
+        old_map = _entries_map(db, prev["_id"])
+        old_keys, new_keys = set(old_map.keys()), set(new_map.keys())
 
-            for uid in new_keys - old_keys:
-                r = new_map[uid]
-                changes.append({"change_type": "added", "uid": uid,
-                                "primary_name": r["primary_name"], "detail": {}})
-            for uid in old_keys - new_keys:
-                r = old_map[uid]
-                changes.append({"change_type": "removed", "uid": uid,
-                                "primary_name": r["primary_name"], "detail": {}})
-            for uid in old_keys & new_keys:
-                if old_map[uid]["raw_fingerprint"] != new_map[uid]["raw_fingerprint"]:
-                    changes.append({
-                        "change_type": "modified", "uid": uid,
-                        "primary_name": new_map[uid]["primary_name"],
-                        "detail": {
-                            "old_name": old_map[uid]["primary_name"],
-                            "new_name": new_map[uid]["primary_name"],
-                        }})
+        # Discovered Additions
+        for uid in new_keys - old_keys:
+            r = new_map[uid]
+            changes.append({"change_type": "added", "uid": uid, "primary_name": r["primary_name"], "detail": {}})
+            
+        # Discovered Removals
+        for uid in old_keys - new_keys:
+            r = old_map[uid]
+            changes.append({"change_type": "removed", "uid": uid, "primary_name": r["primary_name"], "detail": {}})
+            
+        # Discovered Modifications via structural fingerprint mismatches
+        for uid in old_keys & new_keys:
+            if old_map[uid]["raw_fingerprint"] != new_map[uid]["raw_fingerprint"]:
+                changes.append({
+                    "change_type": "modified", "uid": uid,
+                    "primary_name": new_map[uid]["primary_name"],
+                    "detail": {
+                        "old_name": old_map[uid]["primary_name"],
+                        "new_name": new_map[uid]["primary_name"],
+                    }
+                })
 
-        c.executemany(
-            "INSERT INTO changes(run_at,source,change_type,uid,primary_name,"
-            "detail_json) VALUES(?,?,?,?,?,?)",
-            [(now, source, ch["change_type"], ch["uid"], ch["primary_name"],
-              json.dumps(ch["detail"])) for ch in changes])
+    # Save tracking delta logs if modifications took place
+    if changes:
+        mongo_changes = []
+        for ch in changes:
+            mongo_changes.append({
+                "run_at": now,
+                "source": source,
+                "change_type": ch["change_type"],
+                "uid": ch["uid"],
+                "primary_name": ch["primary_name"],
+                "detail": ch["detail"]
+            })
+        db.changes.insert_many(mongo_changes)
 
-        return {"skipped": False, "snapshot_id": snap_id,
-                "entry_count": len(records), "changes": changes}
+    return {"skipped": False, "snapshot_id": str(snap_id), "entry_count": len(records), "changes": changes}
 
 
 def recent_changes(limit=200):
-    with _conn() as c:
-        rows = c.execute(
-            "SELECT * FROM changes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        return [dict(r) for r in rows]
+    """Fetches the latest database change logs for audit tracking."""
+    db = _get_db()
+    cursor = db.changes.find({}, sort=[("_id", DESCENDING)]).limit(limit)
+    out = []
+    for doc in cursor:
+        doc["_id"] = str(doc["_id"])  # Make ObjectId safely JSON serializable
+        # Recreate expected relational detail_json string for the UI dashboard compatibility
+        doc["detail_json"] = json.dumps(doc.get("detail", {}))
+        out.append(doc)
+    return out
 
 
 def all_current_entries():
-    """Latest snapshot per source, flattened — used for screening."""
+    """Aggregates the active snapshot data layers for current fuzzy screening routines."""
+    db = _get_db()
     out = []
-    with _conn() as c:
-        sources = [r["source"] for r in c.execute(
-            "SELECT DISTINCT source FROM snapshots").fetchall()]
-        for s in sources:
-            snap = latest_snapshot(c, s)
-            if not snap:
-                continue
-            for r in c.execute("SELECT * FROM entries WHERE snapshot_id=?",
-                               (snap["id"],)).fetchall():
-                out.append(dict(r))
+    sources = db.snapshots.distinct("source")
+    
+    for s in sources:
+        snap = latest_snapshot(db, s)
+        if not snap:
+            continue
+        cursor = db.entries.find({"snapshot_id": snap["_id"]})
+        for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            doc["snapshot_id"] = str(doc["snapshot_id"])
+            
+            # Map native array values back into stringified JSON format 
+            # so backend/ingest.py screen_name loop can parse them without crashes
+            doc["aliases_json"] = json.dumps(doc.get("aliases", []))
+            doc["programs_json"] = json.dumps(doc.get("programs", []))
+            out.append(doc)
     return out
 
 
 def previous_count(source):
-    """Entry count of the most recent stored snapshot for this source, or None."""
-    with _conn() as c:
-        snap = latest_snapshot(c, source)
-        return snap["entry_count"] if snap else None
+    """Reads the exact item length of the latest historical track record."""
+    db = _get_db()
+    snap = latest_snapshot(db, source)
+    return snap["entry_count"] if snap else None
 
 
 def stats():
-    with _conn() as c:
-        rows = c.execute(
-            "SELECT source, MAX(fetched_at) AS last, "
-            "(SELECT entry_count FROM snapshots s2 WHERE s2.source=s1.source "
-            " ORDER BY id DESC LIMIT 1) AS count "
-            "FROM snapshots s1 GROUP BY source").fetchall()
-        return [dict(r) for r in rows]
+    """Calculates active overview parameters for client tracking screens."""
+    db = _get_db()
+    out = []
+    sources = db.snapshots.distinct("source")
+    for s in sources:
+        snap = latest_snapshot(db, s)
+        if snap:
+            out.append({
+                "source": s,
+                "last": snap["fetched_at"],
+                "count": snap["entry_count"]
+            })
+    return out
