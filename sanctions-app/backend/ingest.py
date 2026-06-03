@@ -17,7 +17,7 @@ from . import db as storage
 
 
 def _fetch(url, timeout=60):
-    req = urllib.request.Request(url, headers={\"User-Agent\": \"compliance-app/1.0\"})
+    req = urllib.request.Request(url, headers={"User-Agent": "compliance-app/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
 
