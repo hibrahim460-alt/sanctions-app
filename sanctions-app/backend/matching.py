@@ -1,9 +1,19 @@
 """
 Fuzzy name matching engine.
 Includes basic string similarity metrics, token cleaning, and name variation generators.
+Satisfies imports for both ingestion scoring and auto-suggestions.
 """
 
 import re
+
+# Internal lookup cache to support vocabulary structures in suggest.py
+_ALIAS_LOOKUP = {}
+
+def normalize(text):
+    """Lowercases string and strips trailing/leading whitespaces."""
+    if not text:
+        return ""
+    return text.lower().strip()
 
 def tokens(text):
     """Split text into lowercase alphanumeric components, removing noise punctuation."""
@@ -44,6 +54,10 @@ def levenshtein_similarity(s1, s2):
     max_len = max(len(s1), len(s2))
     return 1.0 - (lev_dist / max_len)
 
+def _lev_ratio(s1, s2):
+    """Alias helper ratio mapping required by suggest module."""
+    return levenshtein_similarity(s1, s2)
+
 def match_score(name1, name2):
     """Wrapper function evaluating similarity between two singular name targets."""
     return levenshtein_similarity(name1, name2)
@@ -59,7 +73,6 @@ def best_match(query, target_names):
     highest_score = 0.0
     matched_target = ""
 
-    # Clear trailing whitespace and clean token structure
     q_clean = " ".join(tokens(query))
 
     for target in target_names:
@@ -67,7 +80,6 @@ def best_match(query, target_names):
             continue
         t_clean = " ".join(tokens(target))
         
-        # Calculate base Levenshtein similarity
         score = levenshtein_similarity(q_clean, t_clean)
         if score > highest_score:
             highest_score = score
@@ -93,6 +105,5 @@ def generate_variants(name):
         return []
     variants = [" ".join(tks)]
     if len(tks) > 1:
-        # Include compressed variant where multi-token names merge without spaces
         variants.append("".join(tks))
     return list(set(variants))
