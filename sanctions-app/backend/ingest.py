@@ -10,7 +10,6 @@ import hashlib
 import json
 import urllib.request
 
-# Direct imports since Gunicorn runs with 'backend' as the top-level directory root
 from sources import SOURCES
 from parsers import PARSERS
 from validation import validate_feed
