@@ -15,7 +15,7 @@ if BACKEND_DIR not in sys.path:
 from flask import Flask, jsonify, request, send_from_directory
 
 import ingest
-import storage
+import db as storage
 import suggest
 
 FRONTEND_DIR = os.path.join(BACKEND_DIR, "..", "frontend")
