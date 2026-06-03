@@ -89,5 +89,4 @@ def generate_variants(name):
         return []
     variants = [" ".join(tks)]
     if len(tks) > 1:
-        variants.append(" ".join(reversed(tks)))
-    return list(set(variants))
+        variants.append("
