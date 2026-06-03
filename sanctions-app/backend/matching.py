@@ -1,7 +1,7 @@
 """
 Fuzzy name matching engine.
-Includes basic string similarity metrics, token cleaning, and name variation generators.
-Satisfies imports for both ingestion scoring and auto-suggestions.
+Includes basic string similarity metrics, token cleaning, phonetic mapping,
+and name variation generators. Satisfies all compliance pipeline modules.
 """
 
 import re
@@ -21,6 +21,48 @@ def tokens(text):
         return []
     cleaned = re.sub(r'[^\w\s]', ' ', text.lower())
     return [t for t in cleaned.split() if t]
+
+def phonetic_key(word):
+    """
+    Generates a Soundex-style phonetic representation code for names.
+    Satisfies requirements for typo suggestions and alternative key sound maps.
+    """
+    if not word:
+        return ""
+    word = word.upper()
+    first_letter = word[0]
+    
+    # Character conversion dictionary mapping equivalent sounds
+    mappings = {
+        'B': '1', 'F': '1', 'P': '1', 'V': '1',
+        'C': '2', 'G': '2', 'J': '2', 'K': '2', 'Q': '2', 'S': '2', 'X': '2', 'Z': '2',
+        'D': '3', 'T': '3',
+        'L': '4',
+        'M': '5', 'N': '5',
+        'R': '6'
+    }
+    
+    code = first_letter
+    prev_val = mappings.get(first_letter, '0')
+    
+    for char in word[1:]:
+        val = mappings.get(char, '0')
+        if val != '0':
+            if val != prev_val:
+                code += val
+                prev_val = val
+        else:
+            prev_val = '0'
+            
+    # Normalize to a standard 4 character string pattern
+    code = code.replace('0', '')
+    if len(code) < 4:
+        code += '0' * (4 - len(code))
+    return code[:4]
+
+def phonetic_code(word):
+    """Fallback alias reference redirecting directly to phonetic_key mapping."""
+    return phonetic_key(word)
 
 def levenshtein_similarity(s1, s2):
     """Calculates normalized Levenshtein similarity score between 0.0 and 1.0."""
