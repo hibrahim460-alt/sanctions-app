@@ -1,5 +1,5 @@
 """
-Flask web app: dashboard + JSON API with typo suggestion layer.
+Flask web app: dashboard + JSON API.
 
 Endpoints:
   GET  /                  -> dashboard (frontend/index.html)
@@ -7,8 +7,8 @@ Endpoints:
   GET  /api/stats         -> per-source last-updated + entry counts
   GET  /api/changes       -> recent change feed (added/removed/modified)
   GET  /api/screen?q=NAME -> screen a name against the current lists
-  GET  /api/variants?q=X  —> show spelling combinations from clusters
-  GET  /api/suggest?q=X   —> "did you mean" typos matching list vocab
+  GET  /api/variants?q=X  -> show spelling combinations from clusters
+  GET  /api/suggest?q=X   -> "did you mean" typos matching list vocab
 """
 
 import os
@@ -22,7 +22,7 @@ FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
 app = Flask(__name__)
 
-# Native CORS configuration (Tells browsers it is safe to connect)
+# Native CORS configuration (Ensures cross-origin requests from the Static Site succeed)
 @app.after_request
 def add_cors_headers(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -30,7 +30,6 @@ def add_cors_headers(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     return response
 
-# Initialize database collections and search indexes
 storage.init_db()
 
 
