@@ -10,10 +10,11 @@ import hashlib
 import json
 import urllib.request
 
-from .sources import SOURCES
-from .parsers import PARSERS
-from .validation import validate_feed
-from . import db as storage
+# Direct imports since Gunicorn runs with 'backend' as the top-level directory root
+from sources import SOURCES
+from parsers import PARSERS
+from validation import validate_feed
+import db as storage
 
 
 def _fetch(url, timeout=60):
@@ -75,7 +76,7 @@ def run_ingest():
             report.append({"source": key, "status": "error", "error": str(e)})
     # refresh the typo-suggestion vocabulary to reflect the latest lists
     try:
-        from . import suggest
+        import suggest
         suggest.invalidate_cache()
     except Exception:
         pass
@@ -83,7 +84,7 @@ def run_ingest():
 
 
 # --- screening (uses the stacked matching engine) ---------------------------
-from .matching import best_match, match_score
+from matching import best_match, match_score
 
 
 def screen_name(query, threshold=0.80):
