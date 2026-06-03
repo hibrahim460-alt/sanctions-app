@@ -89,4 +89,6 @@ def generate_variants(name):
         return []
     variants = [" ".join(tks)]
     if len(tks) > 1:
-        variants.append("
+        # Also include a variant where multi-token names are compressed without spaces
+        variants.append("".join(tks))
+    return list(set(variants))
