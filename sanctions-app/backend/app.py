@@ -2,20 +2,15 @@
 Flask web app: dashboard + JSON API.
 """
 
-import os
-import sys
-
-# --- FORCED PATH INJECTION ---
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-if BACKEND_DIR not in sys.path:
-    sys.path.insert(0, BACKEND_DIR)
-
 from flask import Flask, jsonify, request, send_from_directory
+import os
 
+# Straight direct imports - path context is guaranteed by __init__.py
 import ingest
 import db as storage
 import suggest
 
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BACKEND_DIR, "..", "frontend")
 
 app = Flask(__name__)
