@@ -6,17 +6,11 @@ snapshot, and records the diff. screen_name() does basic fuzzy matching of a
 query name against the current consolidated set.
 """
 
-import os
-import sys
 import hashlib
 import json
 import urllib.request
 
-# --- FORCED PATH INJECTION ---
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-if BACKEND_DIR not in sys.path:
-    sys.path.insert(0, BACKEND_DIR)
-
+# Straight direct imports - path context is guaranteed by __init__.py
 from sources import SOURCES
 from parsers import PARSERS
 from validation import validate_feed
