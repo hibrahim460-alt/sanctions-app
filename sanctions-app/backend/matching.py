@@ -1,86 +1,90 @@
 """
-Text normalization, tokenization, phonetic key generation, 
-and string similarity matching computations.
+Fuzzy name matching engine.
+Includes basic string similarity metrics, token cleaning, and name variation generators.
 """
 
 import re
 
-# Global lookup for alias variations
-_ALIAS_LOOKUP = {}
-
-def normalize(text):
-    """Standard lowercase alphanumeric string normalization."""
-    if not text:
-        return ""
-    text = text.lower()
-    # Strip out punctuation and special characters, preserve whitespace
-    text = re.sub(r'[^\w\s]', '', text)
-    return text.strip()
-
 def tokens(text):
-    """Split text into individual word tokens, ignoring empty elements."""
-    norm = normalize(text)
-    if not norm:
+    """Split text into lowercase alphanumeric components, removing noise punctuation."""
+    if not text:
         return []
-    return [t for t in norm.split() if len(t) > 0]
+    cleaned = re.sub(r'[^\w\s]', ' ', text.lower())
+    return [t for t in cleaned.split() if t]
 
-def phonetic_key(text):
-    """Generates a simplified phonetic code to match sound-alike names."""
-    t = normalize(text)
-    if not t:
-        return ""
-    
-    first_letter = t[0].upper()
-    # Basic soundex mapping grid
-    mapping = {
-        'B': '1', 'F': '1', 'P': '1', 'V': '1',
-        'C': '2', 'G': '2', 'J': '2', 'K': '2', 'Q': '2', 'S': '2', 'X': '2', 'Z': '2',
-        'D': '3', 'T': '3',
-        'L': '4',
-        'M': '5', 'N': '5',
-        'R': '6'
-    }
-    
-    code = first_letter
-    for char in t[1:]:
-        upper_char = char.upper()
-        if upper_char in mapping:
-            val = mapping[upper_char]
-            if val != code[-1]:  # Drop consecutive duplicates
-                code += val
-                
-    return code[:4].ljust(4, '0')
-
-def _lev_ratio(s1, s2):
-    """Computes the Levenshtein distance similarity metric between strings."""
+def levenshtein_similarity(s1, s2):
+    """Calculates normalized Levenshtein similarity score between 0.0 and 1.0."""
+    if not s1 or not s2:
+        return 0.0
     if s1 == s2:
         return 1.0
+        
     rows = len(s1) + 1
     cols = len(s2) + 1
-    if rows == 1 or cols == 1:
-        return 0.0
-        
-    distance = [[0 for _ in range(cols)] for _ in range(rows)]
+    distance = [[0] * cols for _ in range(rows)]
+
     for i in range(1, rows):
         distance[i][0] = i
     for j in range(1, cols):
         distance[0][j] = j
-        
-    for col in range(1, cols):
-        for row in range(1, rows):
-            if s1[row-1] == s2[col-1]:
+
+    for i in range(1, rows):
+        for j in range(1, cols):
+            if s1[i-1] == s2[j-1]:
                 cost = 0
             else:
                 cost = 1
-            distance[row][col] = min(
-                distance[row-1][col] + 1,      # deletion
-                distance[row][col-1] + 1,      # insertion
-                distance[row-1][col-1] + cost  # substitution
+            distance[i][j] = min(
+                distance[i-1][j] + 1,      # Deletion
+                distance[i][j-1] + 1,      # Insertion
+                distance[i-1][j-1] + cost  # Substitution
             )
-    
+
     lev_dist = distance[rows-1][cols-1]
     max_len = max(len(s1), len(s2))
     return 1.0 - (lev_dist / max_len)
+
+def match_score(name1, name2):
+    """Wrapper function evaluating similarity between two singular name targets."""
+    return levenshtein_similarity(name1, name2)
+
+def best_match(query, target_names):
+    """
+    Evaluates a query string against an array of target names/aliases.
+    Returns the maximum score observed and specific reasons.
+    """
+    if not query or not target_names:
+        return {"score": 0.0, "reasons": ["Empty query or target dataset."]}
+
+    highest_score = 0.0
+    matched_target = ""
+
+    # Clear trailing whitespace and clean token structure
+    q_clean = " ".join(tokens(query))
+
+    for target in target_names:
+        if not target:
+            continue
+        t_clean = " ".join(tokens(target))
+        
+        # Calculate base Levenshtein similarity
+        score = levenshtein_similarity(q_clean, t_clean)
+        if score > highest_score:
+            highest_score = score
+            matched_target = target
+
+    reasons = []
+    if highest_score >= 0.85:
+        reasons.append(f"Strong spelling profile similarity matched against '{matched_target}'")
+    elif highest_score >= 0.75:
+        reasons.append(f"Fuzzy character transposition layout matched against '{matched_target}'")
+    else:
+        reasons.append("No matches detected above validation benchmarks.")
+
+    return {
+        "score": round(highest_score, 4),
+        "reasons": reasons
+    }
 
 def generate_variants(name):
     """Produces structural spelling layout variations for an identity string."""
@@ -89,6 +93,6 @@ def generate_variants(name):
         return []
     variants = [" ".join(tks)]
     if len(tks) > 1:
-        # Also include a variant where multi-token names are compressed without spaces
+        # Include compressed variant where multi-token names merge without spaces
         variants.append("".join(tks))
     return list(set(variants))
