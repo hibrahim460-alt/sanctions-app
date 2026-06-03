@@ -20,9 +20,22 @@ How it works:
 import json
 from collections import Counter
 
+import os
+import sys
+
+# Guarantee this module can locate sibling modules like matching.py
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
 import storage
-from matching import (normalize, tokens, phonetic_key, _lev_ratio,
-                      _ALIAS_LOOKUP)
+from matching import (normalize, tokens, _lev_ratio, _ALIAS_LOOKUP)
+
+# Look safely for phonetic_key or fall back gracefully
+try:
+    from matching import phonetic_key
+except ImportError:
+    from matching import phonetic_code as phonetic_key
 
 # module-level cache of the vocabulary so we don't rebuild every keystroke
 _VOCAB = None              # Counter: token -> frequency
