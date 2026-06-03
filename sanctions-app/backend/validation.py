@@ -136,4 +136,10 @@ def validate_feed(source, raw, records, prev_count=None):
     order = {"ok": 0, "warn": 1, "fail": 2}
     status = pre["status"] if order[pre["status"]] >= order[post["status"]] else post["status"]
 
-    return {"source": source, "status": status, "stage": "post-parse", "issues": issues, "entry_count": n if 'n' in locals() else len(records)}
+    return {
+        "source": source, 
+        "status": status, 
+        "stage": "post-parse", 
+        "issues": issues, 
+        "entry_count": len(records)
+    }
