@@ -12,6 +12,18 @@ Endpoints:
 """
 
 import os
+import sys
+
+# --- AUTO-PATH RESOLVER ---
+# Automatically guarantees Python can locate 'suggest.py' and other modules
+# regardless of where Gunicorn or Render initiates the startup command.
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(CURRENT_DIR)
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+if PARENT_DIR not in sys.path:
+    sys.path.insert(0, PARENT_DIR)
+
 from flask import Flask, jsonify, request, send_from_directory
 
 import ingest
