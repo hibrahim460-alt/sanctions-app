@@ -5,9 +5,9 @@ Flask web app: dashboard + JSON API.
 from flask import Flask, jsonify, request, send_from_directory
 import os
 
-# Straight direct imports - path context is guaranteed by __init__.py
+# Straight direct imports matching your filesystem
 import ingest
-import db as storage
+import storage
 import suggest
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
