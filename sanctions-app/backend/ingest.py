@@ -10,14 +10,14 @@ import hashlib
 import json
 import urllib.request
 
-from sources import SOURCES
-from parsers import PARSERS
-from validation import validate_feed
-import db as storage
+from .sources import SOURCES
+from .parsers import PARSERS
+from .validation import validate_feed
+from . import db as storage
 
 
 def _fetch(url, timeout=60):
-    req = urllib.request.Request(url, headers={"User-Agent": "compliance-app/1.0"})
+    req = urllib.request.Request(url, headers={\"User-Agent\": \"compliance-app/1.0\"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
 
@@ -44,26 +44,30 @@ def run_ingest():
                 # Do NOT store: a broken/changed feed must not overwrite good
                 # data or generate a false "everything removed" diff.
                 report.append({
-                    "source": key, "status": "validation_failed",
-                    "entries": len(records),
-                    "issues": check["issues"],
-                    "note": "Snapshot NOT stored. Feed structure changed or fetch failed — fix the parser/URL before trusting this source.",
+                    "source": key,
+                    "status": "failed_validation",
+                    "issues": check["issues"]
                 })
                 continue
 
-            result = storage.save_snapshot_and_diff(key, records, file_hash)
+            # Check if feed content changed since last crawl
+            if storage.is_duplicate_hash(key, file_hash):
+                report.append({"source": key, "status": "skipped",
+                               "entries": len(records),
+                               "note": "Content hash unchanged since last snapshot."})
+                continue
 
-            base = {"source": key, "validation": check["status"],
-                    "issues": check["issues"]}
+            # Store snapshot & calculate diffs
+            result = storage.store_snapshot(key, file_hash, records)
             if result.get("skipped"):
-                report.append({**base, "status": "unchanged",
-                               "entries": len(records)})
+                report.append({"source": key, "status": "skipped",
+                               "entries": result["entry_count"],
+                               "note": "Identical record set exists."})
             else:
-                added = sum(1 for c in result["changes"] if c["change_type"] == "added")
-                removed = sum(1 for c in result["changes"] if c["change_type"] == "removed")
-                modified = sum(1 for c in result["changes"] if c["change_type"] == "modified")
-                report.append({**base,
-                               "status": "updated" if check["status"] == "ok" else "updated_with_warnings",
+                added = len(result.get("added", []))
+                removed = len(result.get("removed", []))
+                modified = len(result.get("modified", []))
+                report.append({"source": key, "status": "success",
                                "entries": result["entry_count"],
                                "added": added, "removed": removed,
                                "modified": modified})
@@ -71,7 +75,7 @@ def run_ingest():
             report.append({"source": key, "status": "error", "error": str(e)})
     # refresh the typo-suggestion vocabulary to reflect the latest lists
     try:
-        import suggest
+        from . import suggest
         suggest.invalidate_cache()
     except Exception:
         pass
@@ -79,7 +83,7 @@ def run_ingest():
 
 
 # --- screening (uses the stacked matching engine) ---------------------------
-from matching import best_match, match_score
+from .matching import best_match, match_score
 
 
 def screen_name(query, threshold=0.80):
@@ -104,5 +108,3 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "screen":
         print(json.dumps(screen_name(" ".join(sys.argv[2:])), indent=2))
-    else:
-        print(json.dumps(run_ingest(), indent=2))
