@@ -103,7 +103,7 @@
   <header>
     <div class="brand">
       <h1><span class="pulse"></span>Watchlist Monitor</h1>
-      <div class="sub">OFAC · UN · EU · INTERPOL — consolidated sanctions & watchlist surveillance</div>
+      <div class="sub">OFAC · UN · EU · OpenSanctions — consolidated sanctions &amp; watchlist surveillance</div>
     </div>
     <button class="btn" id="run">Run ingest now</button>
   </header>
@@ -133,25 +133,56 @@
       </div>
       <div id="hits"><div class="empty">Results appear here.</div></div>
       <div class="note">
-        Token-overlap matching is a starting point only. For production, swap in
-        rapidfuzz/phonetic matching and keep an immutable audit log of every
-        screen. INTERPOL has no official feed — enter those manually or via a
-        licensed provider; do not scrape.
+        Matching combines normalization, phonetics, edit distance and
+        transliteration clusters; keep an immutable audit log of every screen.
+        INTERPOL has no official feed — enter those manually or via a licensed
+        provider; do not scrape.
       </div>
     </section>
   </div>
 
 <script>
-const api = p => fetch(p).then(r=>r.json());
+// ---- safe fetch helpers ----------------------------------------------------
+// Reads the response as text first so an empty body / HTML error page / timeout
+// produces a readable message instead of "Unexpected end of JSON input".
+async function fetchJSON(url, options){
+  const resp = await fetch(url, options);
+  const text = await resp.text();
+  if(!resp.ok){
+    let msg = text && text.trim() ? text.slice(0, 400) : "(empty response body)";
+    throw new Error(`Server ${resp.status} ${resp.statusText} — ${msg}`);
+  }
+  if(!text || !text.trim()){
+    throw new Error("Empty response from server (the request may have timed out). "
+      + "Large feeds can exceed the web request limit — consider running the "
+      + "scheduled ingest job instead.");
+  }
+  try{
+    return JSON.parse(text);
+  }catch(_){
+    throw new Error("Server returned a non-JSON response: " + text.slice(0, 400));
+  }
+}
+
+const api = p => fetchJSON(p);
 let allChanges = [], filter = "all";
 
 async function loadStats(){
   const meta = {
     OFAC_SDN:{label:"OFAC SDN", live:true}, OFAC_CONS:{label:"OFAC Non-SDN", live:true},
     UN:{label:"UN", live:true},
+    OPENSANCTIONS:{label:"OpenSanctions", live:true},
     EU:{label:"EU", live:false}, INTERPOL:{label:"INTERPOL", live:false}
   };
-  const data = await api("/api/stats");
+  let data;
+  try{
+    data = await api("/api/stats");
+  }catch(err){
+    document.getElementById("sourceCards").innerHTML =
+      `<div class="card disabled"><h3>Stats unavailable</h3>`
+      + `<div class="meta">${err.message}</div></div>`;
+    return;
+  }
   const byCount = {}; (data.sources||[]).forEach(s=>byCount[s.source]=s);
   const el = document.getElementById("sourceCards"); el.innerHTML="";
   Object.entries(meta).forEach(([k,m])=>{
@@ -180,8 +211,13 @@ function renderChanges(){
 }
 
 async function loadChanges(){
-  const d = await api("/api/changes?limit=400");
-  allChanges = d.changes||[]; renderChanges();
+  try{
+    const d = await api("/api/changes?limit=400");
+    allChanges = d.changes||[]; renderChanges();
+  }catch(err){
+    document.getElementById("changes").innerHTML =
+      `<div class="empty">Could not load changes — ${err.message}</div>`;
+  }
 }
 
 document.getElementById("filters").addEventListener("click",e=>{
@@ -193,17 +229,32 @@ document.getElementById("filters").addEventListener("click",e=>{
 document.getElementById("run").addEventListener("click", async e=>{
   const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> Ingesting…';
   try{
-    const rep = await fetch("/api/ingest",{method:"POST"}).then(r=>r.json());
+    const rep = await fetchJSON("/api/ingest", {method:"POST"});
     renderBanner(rep);
     await loadStats(); await loadChanges();
   }
-  catch(err){ alert("Ingest failed: "+err); }
+  catch(err){
+    // surface the real reason in the banner, not just an alert
+    showError("Ingest failed", err.message);
+  }
   b.disabled=false; b.textContent="Run ingest now";
 });
 
+function showError(head, msg){
+  const banner=document.getElementById("banner");
+  banner.style.display="flex";
+  banner.innerHTML =
+    `<div class="alert fail"><b>${head}</b><ul><li>${(msg||"").replace(/</g,"&lt;")}</li></ul></div>`;
+}
+
 function renderBanner(report){
   const banner=document.getElementById("banner");
-  const items=(report||[]).filter(r=>r.status!=="disabled");
+  // the API normally returns an array of per-source results; guard otherwise
+  if(!Array.isArray(report)){
+    if(report && report.error){ showError("Ingest error", report.error); return; }
+    banner.style.display="none"; return;
+  }
+  const items=report.filter(r=>r.status!=="disabled");
   if(!items.length){banner.style.display="none";return;}
   banner.style.display="flex";
   banner.innerHTML=items.map(r=>{
@@ -213,8 +264,8 @@ function renderBanner(report){
     else if(r.status==="updated_with_warnings"||(r.issues&&r.issues.length)){cls="warn";head=`${r.source}: updated with warnings`;}
     else if(r.status==="unchanged"){cls="ok";head=`${r.source}: no change since last fetch`;}
     else{cls="ok";head=`${r.source}: updated cleanly (+${r.added||0} / −${r.removed||0} / ~${r.modified||0})`;}
-    const detail=r.error?`<ul><li>${r.error}</li></ul>`
-      : (r.issues&&r.issues.length)?`<ul>${r.issues.map(i=>`<li>${i}</li>`).join("")}</ul>`:"";
+    const detail=r.error?`<ul><li>${String(r.error).replace(/</g,"&lt;")}</li></ul>`
+      : (r.issues&&r.issues.length)?`<ul>${r.issues.map(i=>`<li>${String(i).replace(/</g,"&lt;")}</li>`).join("")}</ul>`:"";
     const noteLine=r.note?`<div style="margin-top:5px;opacity:.85">${r.note}</div>`:"";
     return `<div class="alert ${cls}"><b>${head}</b>${detail}${noteLine}</div>`;
   }).join("");
@@ -225,29 +276,33 @@ async function doScreen(){
   const box=document.getElementById("hits");
   if(!q){box.innerHTML='<div class="empty">Enter a name.</div>';return;}
   box.innerHTML='<div class="empty">Screening…</div>';
-  // fetch screening + typo suggestions in parallel
-  const [d, sug] = await Promise.all([
-    api("/api/screen?q="+encodeURIComponent(q)),
-    api("/api/suggest?q="+encodeURIComponent(q))
-  ]);
-  let dym="";
-  if(sug && sug.has_suggestions && (sug.did_you_mean||[]).length){
-    const btns=sug.did_you_mean.map(s=>`<button onclick="reScreen('${s.replace(/'/g,"")}')">${s}</button>`).join("");
-    dym=`<div class="dym"><div class="lead">Possible typo — screening still ran on what you typed. Did you mean:</div>${btns}</div>`;
+  try{
+    // fetch screening + typo suggestions in parallel
+    const [d, sug] = await Promise.all([
+      api("/api/screen?q="+encodeURIComponent(q)),
+      api("/api/suggest?q="+encodeURIComponent(q))
+    ]);
+    let dym="";
+    if(sug && sug.has_suggestions && (sug.did_you_mean||[]).length){
+      const btns=sug.did_you_mean.map(s=>`<button onclick="reScreen('${s.replace(/'/g,"")}')">${s}</button>`).join("");
+      dym=`<div class="dym"><div class="lead">Possible typo — screening still ran on what you typed. Did you mean:</div>${btns}</div>`;
+    }
+    const hits=d.hits||[];
+    const list = !hits.length
+      ? '<div class="empty">No matches above threshold for your input.</div>'
+      : hits.map(h=>{
+          const cls=h.score>=0.92?"hi":h.score>=0.85?"md":"lo";
+          const reasons=(h.reasons||[]).length?`<div class="det">↳ ${h.reasons.join(" · ")}</div>`:"";
+          return `<div class="hit"><div class="top">
+            <span class="nm">${h.name}</span>
+            <span class="score ${cls}">${(h.score*100).toFixed(0)}%</span></div>
+            <div class="det">${h.source} · ${h.type} · ${(h.programs||[]).join(", ")||"—"}</div>
+            ${reasons}</div>`;
+        }).join("");
+    box.innerHTML = dym + list;
+  }catch(err){
+    box.innerHTML = `<div class="empty">Screening failed — ${err.message}</div>`;
   }
-  const hits=d.hits||[];
-  const list = !hits.length
-    ? '<div class="empty">No matches above threshold for your input.</div>'
-    : hits.map(h=>{
-        const cls=h.score>=0.92?"hi":h.score>=0.85?"md":"lo";
-        const reasons=(h.reasons||[]).length?`<div class="det">↳ ${h.reasons.join(" · ")}</div>`:"";
-        return `<div class="hit"><div class="top">
-          <span class="nm">${h.name}</span>
-          <span class="score ${cls}">${(h.score*100).toFixed(0)}%</span></div>
-          <div class="det">${h.source} · ${h.type} · ${(h.programs||[]).join(", ")||"—"}</div>
-          ${reasons}</div>`;
-      }).join("");
-  box.innerHTML = dym + list;
 }
 
 function reScreen(name){
@@ -260,14 +315,18 @@ async function doVariants(){
   const box=document.getElementById("hits");
   if(!q){box.innerHTML='<div class="empty">Enter a name.</div>';return;}
   box.innerHTML='<div class="empty">Generating expected spellings…</div>';
-  const d=await api("/api/variants?q="+encodeURIComponent(q));
-  const v=d.variants||[];
-  if(!v.length){box.innerHTML='<div class="empty">No known variants for these tokens. Live matching still catches typos & phonetics.</div>';return;}
-  box.innerHTML=`<div class="hit"><div class="det" style="margin-bottom:8px">
-    ${v.length} expected spelling variants for <b>${q}</b> (from transliteration clusters):</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px">
-    ${v.map(x=>`<span class="tag" style="color:var(--ink)">${x}</span>`).join("")}
-    </div></div>`;
+  try{
+    const d=await api("/api/variants?q="+encodeURIComponent(q));
+    const v=d.variants||[];
+    if(!v.length){box.innerHTML='<div class="empty">No known variants for these tokens. Live matching still catches typos &amp; phonetics.</div>';return;}
+    box.innerHTML=`<div class="hit"><div class="det" style="margin-bottom:8px">
+      ${v.length} expected spelling variants for <b>${q}</b> (from transliteration clusters):</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+      ${v.map(x=>`<span class="tag" style="color:var(--ink)">${x}</span>`).join("")}
+      </div></div>`;
+  }catch(err){
+    box.innerHTML = `<div class="empty">Could not generate variants — ${err.message}</div>`;
+  }
 }
 
 document.getElementById("screen").addEventListener("click",doScreen);
